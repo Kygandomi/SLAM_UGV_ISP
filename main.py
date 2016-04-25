@@ -25,19 +25,22 @@ class Fast_Slam():
 
 	'Initialize important components of program'
 	def initializer(self):
+		# First time in loop?
+		self.first = False
+
 		# Number of particles in system
-		self.num_particles = 5
+		self.num_particles = 30
 
 		# Factor by which to scale pixels to represent true distances
-		self.pixel_scaling_factor = 25
+		self.pixel_scaling_factor = 35
 
 		# Robot Initial Heading and Robot Position
 		self.robot_heading = 'EAST'
 		self.robot_pos = [200,200]
 
 		# Set up grid map vairables
-		self.gridx = 1000
-		self.gridy = 800
+		self.gridx = 800
+		self.gridy = 500
 
 		# Initalize particles
 		self.initialize_particle_set()
@@ -63,6 +66,8 @@ class Fast_Slam():
 		points, distances = self.hokoyo_ser.request_scan_points()
 
 		# Clear Encoders ? 
+		self.pcb_ser.clear_encoders
+		self.pcb_ser.clear_encoders
 		self.pcb_ser.clear_encoders
 
 		# Perform robot movement routine
@@ -109,12 +114,22 @@ class Fast_Slam():
 			# Update particle pose strictly with odometry
 			pose = self.update_particle_pose_with_odometry()
 
+			print 'pose'
+			print pose
 			# Correct particle pose with scan matching
+			# if not self.first:
+			# print 'Scan matcher'
 			corrected_pose = self.update_particle_pose_with_scan_matching(points, pose, g_map)
+			# else:
+				# corrected_pose = pose
+
+			print 'corrected pose'
+			print corrected_pose
 
 			# Update particle's map of the world
 			grid_map, weight = self.update_particle_map_with_scan(points, corrected_pose, g_map, distances)
 
+			# print weight
 			# Calculate particle's weight
 			# weight = self.calculate_particle_weight(grid_map, distances)
 
@@ -129,10 +144,15 @@ class Fast_Slam():
 		# Pick best map from particles
 		best_map, best_pose = self.pick_best_particle_map()
 
+		self.first = False
+
 		# Print best map
 		self.laser_scan_plotter.plot_matrix(best_map)
 		self.laser_scan_plotter.plot_robot(best_pose)
 		self.laser_scan_plotter.update() 
+
+		# Perform Hough Transform
+		# self.laser_scan_plotter.hough_transform();
 
 		# Normalize Particle Weights
 		self.normalize_weights()
@@ -155,61 +175,77 @@ class Fast_Slam():
 	'Update Particles Pose based on Scan Matching'
 	def update_particle_pose_with_scan_matching(self, points, pose, grid):
 		# Current pose
-		px = pose[0]
-		py = pose[1]
+		px = int(pose[0])
+		py = int(pose[1])
 		ptheta = pose[2]
 
 		# Current best pose
 		best = 0.5 * len(points)
 		best_x = px
 		best_y = py
-		best_theta = ptheta
+
+		# Determine Best theta
+		p_theta = -1
+		if(ptheta == 'EAST'):
+			p_theta = 135
+		elif(ptheta == 'WEST') :
+			p_theta = 315
+		elif(ptheta == 'SOUTH'):
+			p_theta = 225
+		elif(ptheta == 'NORTH'):
+			p_theta = 0
+
+		# Set best theta
+		best_theta = p_theta
 
 		# Check for angle differences from -3 to +3
-		for angle in range(-3,3):
+		for angle in range(-25,25):
 			# Check over x range from -3 to +3
-			for p_x in range(px-3, px+3):
+			for p_x in range(px-55, px+55):
 				# Check over y range from -3 to +3
-				for p_y in range(py-3, py+3):
+				for p_y in range(py-45, py+45):
 					total = 0.0
-					for point in points : 
-						# Shift particle
-						x_pos = (points[0] - p_x)/self.pixel_scaling_factor
-						y_pos = (points[1] - p_y)/self.pixel_scaling_factor
+					if(p_x > 0 and p_x < self.gridx and p_y > 0 and p_y < self.gridy):
+						for point in points : 
+							# Shift particle
+							x_pos = (point[0] - p_x)/self.pixel_scaling_factor
+							y_pos = (point[1] - p_y)/self.pixel_scaling_factor
 
-						# Get Angle we're considering
-						theta = -1
-						if(particle_pose[2] == 'EAST'):
-							theta = 135
-						elif(particle_pose[2] == 'WEST') :
-							theta = 315
-						elif(particle_pose[2] == 'SOUTH'):
-							theta = 225
-						elif(particle_pose[2] == 'NORTH'):
-							theta = 0
+							# Get Angle we're considering
+							theta = -1
+							if(ptheta == 'EAST'):
+								theta = 135
+							elif(ptheta == 'WEST') :
+								theta = 315
+							elif(ptheta== 'SOUTH'):
+								theta = 225
+							elif(ptheta == 'NORTH'):
+								theta = 45
 
-						# Add Angle
-						theta = theta + angle; 
+							# Add Angle
+							theta = theta + angle; 
 
-						# Perform Rotation
-						rx = (x_pos * math.cos(math.radians(theta))) - (y_pos * math.sin(math.radians(theta)))
-						ry = (x_pos * math.sin(math.radians(theta))) + (y_pos * math.cos(math.radians(theta))) 
+							# Perform Rotation
+							rx = (x_pos * math.cos(math.radians(theta))) - (y_pos * math.sin(math.radians(theta)))
+							ry = (x_pos * math.sin(math.radians(theta))) + (y_pos * math.cos(math.radians(theta))) 
 
-						# Now add translation 
-						tx = int(rx + p_x)
-						ty = int(ry + p_y)
+							# Now add translation 
+							tx = int(rx + p_x)
+							ty = int(ry + p_y)
 
-						# Add this to running total
-						total = total + grid[tx][ty]
+							# Add this to running total
+							if tx > 0 and tx < self.gridx and ty > 0 and ty > self.gridy:
+								total = total + grid[tx][ty]
+							else: 
+								break
 
 					# If this points total is greater than the previous best total
-					if(total > best){
+					if(total > best):
 						# Save this points information
 						best = total
 						best_x = p_x
 						best_y = p_y
 						best_theta = theta
-					}
 
 		# Return corrected pose
 		return [best_x, best_y, best_theta]
@@ -232,6 +268,21 @@ class Fast_Slam():
 			y_pos = (points[1] - particle_pose[1])/self.pixel_scaling_factor
 			theta = particle_pose[2]
 
+			# x_pos = float((points[0]/self.pixel_scaling_factor - particle_pose[0]
+			# y_pos = float((points[1]/self.pixel_scaling_factor - particle_pose[1]))
+
+
+			# theta = -1
+			# if(particle_pose[2] == 'EAST'):
+			# 	theta = 135
+			# elif(particle_pose[2] == 'WEST') :
+			# 	theta = 315
+			# elif(particle_pose[2] == 'SOUTH'):
+			# 	theta = 225
+			# elif(particle_pose[2] == 'NORTH'):
+			# 	theta = 45
+
+
 			# Rotate First
 			rx = (x_pos * math.cos(math.radians(theta))) - (y_pos * math.sin(math.radians(theta)))
 			ry = (x_pos * math.sin(math.radians(theta))) + (y_pos * math.cos(math.radians(theta))) 
@@ -241,9 +292,9 @@ class Fast_Slam():
 			ty = int(ry + particle_pose[1])
 
 			# If a wall was detected
-			if(points[2] == 0){
-				g_map[tx][ty] = (g_map[tx][ty] + 1.0) / 2.0
-			}
+			if tx > 0 and tx < self.gridx and ty > 0 and ty > self.gridy:
+				if(points[2] == 0):
+					g_map[tx][ty] = (g_map[tx][ty] + 1.0) / 2.0
 
 			# Angle and Distance from center to this new point
 			delta_x = tx - int(particle_pose[0]) 
@@ -253,15 +304,20 @@ class Fast_Slam():
 
 			# Particle weight is a comparison between actual recorded distances and estimated distance
 			# Summed over all particles
-			weight = weight + abs(delta_r - dist) 
+			weight = weight + abs(delta_r - dist/self.pixel_scaling_factor) 
 
 			# Then the matrix needs to be updated from particles pos to this coord
-			for r in range(1, int(delta_r)) :
+			for r in range(1, int(delta_r)+1) :
 				pixel_x = int(r * math.cos(angle) + particle_pose[0])
 				pixel_y = int(r * math.sin(angle) + particle_pose[1])
 
-				if pixel_x < self.gridx and pixel_y < self.gridy: 
-					g_map[pixel_x][pixel_y] = (g_map[pixel_x][pixel_y] + 0.0) /2.0
+				# if points[2] == 0 : 
+				if pixel_x < self.gridx and pixel_x > 0 and pixel_y < self.gridy and pixel_y > 0: 
+					if r >= int(delta_r)-1:
+						g_map[pixel_x][pixel_y] = (g_map[pixel_x][pixel_y] + 1.0) /2.0
+					else:
+						g_map[pixel_x][pixel_y] = (g_map[pixel_x][pixel_y] + 0.0) /2.0
+				
 
 		# Return grid map (and weight for particle ?)
 		return g_map, weight
@@ -357,10 +413,10 @@ class Fast_Slam():
 
 	'Picks best particle from set and returns its map'
 	def pick_best_particle_map(self):
-		best_weight = -1
+		best_weight = 1000000
 		best_index = -1
 		for p in range(0, len(self.particles)) :
-			if self.particles[p][3] > best_weight :
+			if self.particles[p][3] < best_weight :
 				best_weight = self.particles[p][3]
 				best_index = p
 
@@ -375,7 +431,7 @@ class Fast_Slam():
 		if(len(distances) > 1) :
 			# Range in front of robot
 			path = []
-			for i in range(0, 5) : 
+			for i in range(0, 2) : 
 				if (i == 0):
 					path.append(distances[center_index])
 				else :
@@ -383,9 +439,11 @@ class Fast_Slam():
 					path.append(distances[center_index-1])
 
 			# For every distance directly in front of the robot
+			print 'distances: '
 			for dist in path : 
-				# Check to see if the distances is too small
-				if dist > 0 and dist < 700 : 
+				print dist
+				# Check to see if the distance is too small
+				if dist > 10 and dist < 700 : 
 					return True
 
 		return False
@@ -398,8 +456,8 @@ class Fast_Slam():
 		m1_enc, m2_enc, m3_enc = m1_enc_init, m2_enc_init, m3_enc_init
 
 		# Set thresholds for traveling forward
-		m1_threshold = 50;
-		m3_threshold = 50;
+		m1_threshold = 5;
+		m3_threshold = 5;
 
 		# Set pwm signal for traveling forward
 		m1_l1, m1_l2, m2_l1, m2_l2, m3_l1, m3_l2 = 0, 120, 0, 120, 0, 120
@@ -411,7 +469,6 @@ class Fast_Slam():
 		while((abs(m1_enc - m1_enc_init) < m1_threshold) and (abs(m3_enc - m3_enc_init) < m3_threshold) and counter < 200):
 			# Send move command
 			self.pcb_ser.send_packet(m1_l1, m1_l2, m2_l1, m2_l2, m3_l1, m3_l2)
-			sleep(1)
 
 			# # Debug Statement
 			# print "---"
@@ -426,7 +483,7 @@ class Fast_Slam():
 			# Check incoming readings
 			response = self.pcb_ser.recieve_packet()
 			m1_enc, m2_enc, m3_enc = self.pcb_ser.parse_packet(response)
-			sleep(1)
+			sleep(0.3)
 
 			counter = counter + 1
 
@@ -475,13 +532,28 @@ class Fast_Slam():
 			counter = counter + 1
 
 		# Clear Encoders for next time
+		self.stop_robot()
+		self.stop_robot()
+		sleep(1)
+		response = self.pcb_ser.recieve_packet()
+		m1_enc, m2_enc, m3_enc = self.pcb_ser.parse_packet(response)
+
+
 		self.pcb_ser.clear_encoders
 
 		# Update the zero position on the plot to the robot's new pos
-		v1 = ((abs(m1_enc_init - m1_enc) / 64) * 82) /25.0
-		v2 = ((abs(m2_enc_init - m2_enc) / 64) * 82) /25.0
-		avg = (v1 + v2) / 2.0
+		v1 = ((abs(m1_enc_init - m1_enc) / 6400) * math.pi*82) /self.pixel_scaling_factor
+		v2 = ((abs(m3_enc_init - m3_enc) / 6400) * math.pi*82) /self.pixel_scaling_factor
+
+		if v1 > 1000 or v2 > 1000 or v1 == 0 or v2 == 0:
+			avg = 280
+		else:
+			avg = (v1 + v2) / 2.0
+
+		print 'From: ' + str(self.robot_pos[0]) + " , " + str(self.robot_pos[1])
+		print 'Avg: ' + str(avg)
 		self.update_robot_pos(avg)
+		print 'To: ' + str(self.robot_pos[0]) + " , " + str(self.robot_pos[1])
 
 	'Command for stopping robot movement'
 	def stop_robot(self):
@@ -489,7 +561,7 @@ class Fast_Slam():
 
 	'Updates the Robots Position'
 	def update_robot_pos(self, dist):
-		dist = dist / 100
+		dist = dist
 
 		if(self.robot_heading == 'EAST') :
 			self.robot_pos[0] = self.robot_pos[0] + dist
